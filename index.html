@@ -1,1 +1,459 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice Room</title>
 
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f3f4f6;
+      text-align: center;
+      padding: 25px 12px;
+    }
+
+    .box {
+      max-width: 430px;
+      margin: auto;
+      background: white;
+      padding: 25px 18px;
+      border-radius: 18px;
+    }
+
+    input {
+      width: 90%;
+      padding: 14px;
+      font-size: 17px;
+      margin: 10px 0;
+      box-sizing: border-box;
+    }
+
+    button {
+      padding: 13px 20px;
+      margin: 7px;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+    }
+
+    #join {
+      background: #111827;
+      color: white;
+    }
+
+    #mute {
+      background: #ddd;
+    }
+
+    #status {
+      font-weight: bold;
+      margin: 18px;
+    }
+
+    #users {
+      margin-top: 15px;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="box">
+
+  <h1>🎙️ Voice Room</h1>
+
+  <input id="room"
+         placeholder="Room name"
+         value="AK">
+
+  <br>
+
+  <button id="join">Join Room</button>
+
+  <button id="mute" disabled>
+    🔇 Mute
+  </button>
+
+  <p id="status">Not connected</p>
+
+  <div id="users"></div>
+
+</div>
+
+<script type="module">
+
+import { initializeApp }
+from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+
+import {
+  getDatabase,
+  ref,
+  set,
+  get,
+  onValue,
+  onChildAdded,
+  push,
+  remove
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+
+/* ================================
+   PASTE YOUR FIREBASE CONFIG HERE
+   ================================ */
+  
+  const firebaseConfig = {
+  apiKey: "AIzaSyAht-2uvNYjZsT5MclMLCXbf5QOkIbgQP4",
+  databaseURL: "https://voiceroom-49a3f-default-rtdb.firebaseio.com/",
+  authDomain: "voiceroom-49a3f.firebaseapp.com",
+  projectId: "voiceroom-49a3f",
+  storageBucket: "voiceroom-49a3f.firebasestorage.app",
+  messagingSenderId: "862530914748",
+  appId: "1:862530914748:web:8694d1c274b93674b7c3b9"
+};
+
+
+/* Firebase */
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+
+/* Variables */
+
+let roomName = "";
+let myId = crypto.randomUUID();
+
+let localStream = null;
+let muted = false;
+
+const peers = {};
+
+const iceServers = {
+  iceServers: [
+    {
+      urls: "stun:stun.l.google.com:19302"
+    },
+    {
+      urls: "stun:stun1.l.google.com:19302"
+    }
+  ]
+};
+
+
+/* Elements */
+
+const joinButton = document.getElementById("join");
+const muteButton = document.getElementById("mute");
+const roomInput = document.getElementById("room");
+const statusText = document.getElementById("status");
+const usersDiv = document.getElementById("users");
+
+
+/* Join room */
+
+joinButton.onclick = async () => {
+
+  roomName = roomInput.value.trim();
+
+  if (!roomName) {
+    alert("Room name enter karo");
+    return;
+  }
+
+  try {
+
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: false
+    });
+
+    statusText.innerText = "🟢 Joining room...";
+
+    joinButton.disabled = true;
+    muteButton.disabled = false;
+
+    const myRef = ref(
+      db,
+      `rooms/${roomName}/users/${myId}`
+    );
+
+    await set(myRef, {
+      joined: Date.now()
+    });
+
+    statusText.innerText =
+      "🟢 Connected to room: " + roomName;
+
+    watchUsers();
+
+  } catch (error) {
+
+    console.error(error);
+
+    statusText.innerText =
+      "❌ Microphone permission required";
+
+  }
+
+};
+
+
+/* Watch other users */
+
+function watchUsers() {
+
+  const usersRef = ref(
+    db,
+    `rooms/${roomName}/users`
+  );
+
+  onValue(usersRef, async snapshot => {
+
+    const users = snapshot.val() || {};
+
+    usersDiv.innerText =
+      "👥 People in room: " +
+      Object.keys(users).length;
+
+    for (const userId of Object.keys(users)) {
+
+      if (userId === myId) continue;
+
+      if (!peers[userId]) {
+
+        await createConnection(userId);
+
+      }
+
+    }
+
+  });
+
+}
+
+
+/* Create WebRTC connection */
+
+async function createConnection(otherId) {
+
+  if (peers[otherId]) {
+    return;
+  }
+
+  const pc = new RTCPeerConnection(iceServers);
+
+  peers[otherId] = pc;
+
+
+  /* Send microphone */
+
+  localStream.getTracks().forEach(track => {
+
+    pc.addTrack(track, localStream);
+
+  });
+
+
+  /* Receive friend's voice */
+
+  pc.ontrack = event => {
+
+    let audio = document.getElementById(
+      "audio-" + otherId
+    );
+
+    if (!audio) {
+
+      audio = document.createElement("audio");
+
+      audio.id = "audio-" + otherId;
+      audio.autoplay = true;
+      audio.playsInline = true;
+
+      document.body.appendChild(audio);
+
+    }
+
+    audio.srcObject = event.streams[0];
+
+  };
+
+
+  /* ICE candidate */
+
+  pc.onicecandidate = event => {
+
+    if (!event.candidate) return;
+
+    const candidateRef = push(
+      ref(
+        db,
+        `rooms/${roomName}/signals/${myId}/${otherId}/ice`
+      )
+    );
+
+    set(candidateRef, event.candidate.toJSON());
+
+  };
+
+
+  /*
+    Check who joined first.
+
+    The user with the smaller ID
+    creates the offer.
+  */
+
+  if (myId < otherId) {
+
+    const offer = await pc.createOffer();
+
+    await pc.setLocalDescription(offer);
+
+    await set(
+      ref(
+        db,
+        `rooms/${roomName}/signals/${myId}/${otherId}/offer`
+      ),
+      {
+        type: offer.type,
+        sdp: offer.sdp
+      }
+    );
+
+  }
+
+
+  listenForSignals(otherId, pc);
+
+}
+
+
+/* Listen for WebRTC signals */
+
+function listenForSignals(otherId, pc) {
+
+  const incomingRef = ref(
+    db,
+    `rooms/${roomName}/signals/${otherId}/${myId}`
+  );
+
+
+  /* Offer */
+
+  onValue(incomingRef, async snapshot => {
+
+    const data = snapshot.val();
+
+    if (!data) return;
+
+
+    if (data.offer &&
+        !pc.currentRemoteDescription) {
+
+      await pc.setRemoteDescription(
+        new RTCSessionDescription(data.offer)
+      );
+
+      const answer =
+        await pc.createAnswer();
+
+      await pc.setLocalDescription(answer);
+
+      await set(
+        ref(
+          db,
+          `rooms/${roomName}/signals/${myId}/${otherId}/answer`
+        ),
+        {
+          type: answer.type,
+          sdp: answer.sdp
+        }
+      );
+
+    }
+
+
+    /* Answer */
+
+    if (
+      data.answer &&
+      pc.signalingState === "have-local-offer"
+    ) {
+
+      await pc.setRemoteDescription(
+        new RTCSessionDescription(data.answer)
+      );
+
+    }
+
+  });
+
+
+  /* ICE candidates */
+
+  const iceRef = ref(
+    db,
+    `rooms/${roomName}/signals/${otherId}/${myId}/ice`
+  );
+
+
+  onChildAdded(iceRef, async snapshot => {
+
+    try {
+
+      await pc.addIceCandidate(
+        new RTCIceCandidate(snapshot.val())
+      );
+
+    } catch (error) {
+
+      console.log("ICE error", error);
+
+    }
+
+  });
+
+}
+
+
+/* Mute */
+
+muteButton.onclick = () => {
+
+  if (!localStream) return;
+
+  muted = !muted;
+
+  localStream.getAudioTracks().forEach(track => {
+    track.enabled = !muted;
+  });
+
+  muteButton.innerText =
+    muted ? "🎙️ Unmute" : "🔇 Mute";
+
+};
+
+
+/* Leave page */
+
+window.addEventListener("beforeunload", async () => {
+
+  if (roomName) {
+
+    await remove(
+      ref(
+        db,
+        `rooms/${roomName}/users/${myId}`
+      )
+    );
+
+  }
+
+});
+
+</script>
+
+</body>
+</html>
