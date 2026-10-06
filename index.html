@@ -1,459 +1,254 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Voice Room</title>
+  
+  <!-- Mobile Debugging Tool -->
+  <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+  <script>eruda.init();</script>
+
+  <!-- Firebase Scripts -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 
   <style>
     body {
       font-family: Arial, sans-serif;
-      background: #f3f4f6;
-      text-align: center;
-      padding: 25px 12px;
+      background: #f4f6f8;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
     }
-
-    .box {
-      max-width: 430px;
-      margin: auto;
-      background: white;
-      padding: 25px 18px;
-      border-radius: 18px;
-    }
-
-    input {
+    .card {
+      background: #ffffff;
+      padding: 24px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
       width: 90%;
-      padding: 14px;
-      font-size: 17px;
-      margin: 10px 0;
+      max-width: 380px;
+      text-align: center;
+    }
+    input {
+      width: 100%;
+      padding: 10px;
+      margin-bottom: 12px;
       box-sizing: border-box;
+      border: 1px solid #ccc;
+      border-radius: 6px;
     }
-
     button {
-      padding: 13px 20px;
-      margin: 7px;
+      width: 100%;
+      padding: 12px;
+      margin: 6px 0;
       border: none;
-      border-radius: 10px;
-      font-size: 16px;
-    }
-
-    #join {
-      background: #111827;
+      border-radius: 6px;
+      background-color: #007bff;
       color: white;
-    }
-
-    #mute {
-      background: #ddd;
-    }
-
-    #status {
       font-weight: bold;
-      margin: 18px;
+      cursor: pointer;
     }
-
-    #users {
+    button:disabled {
+      background-color: #cccccc;
+    }
+    #muteBtn {
+      background-color: #28a745;
+    }
+    #muteBtn.muted {
+      background-color: #dc3545;
+    }
+    .status {
       margin-top: 15px;
+      font-weight: bold;
+      color: #555;
     }
   </style>
 </head>
-
 <body>
 
-<div class="box">
-
-  <h1>🎙️ Voice Room</h1>
-
-  <input id="room"
-         placeholder="Room name"
-         value="AK">
-
-  <br>
-
-  <button id="join">Join Room</button>
-
-  <button id="mute" disabled>
-    🔇 Mute
-  </button>
-
-  <p id="status">Not connected</p>
-
-  <div id="users"></div>
-
-</div>
-
-<script type="module">
-
-import { initializeApp }
-from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-
-import {
-  getDatabase,
-  ref,
-  set,
-  get,
-  onValue,
-  onChildAdded,
-  push,
-  remove
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
-
-
-/* ================================
-   PASTE YOUR FIREBASE CONFIG HERE
-   ================================ */
-  
-  const firebaseConfig = {
-  apiKey: "AIzaSyAht-2uvNYjZsT5MclMLCXbf5QOkIbgQP4",
-  databaseURL: "https://voiceroom-49a3f-default-rtdb.firebaseio.com/",
-  authDomain: "voiceroom-49a3f.firebaseapp.com",
-  projectId: "voiceroom-49a3f",
-  storageBucket: "voiceroom-49a3f.firebasestorage.app",
-  messagingSenderId: "862530914748",
-  appId: "1:862530914748:web:8694d1c274b93674b7c3b9"
-};
-
-
-/* Firebase */
-
-const app = initializeApp(firebaseConfig);
-const db = getDatabase(app);
-
-
-/* Variables */
-
-let roomName = "";
-let myId = crypto.randomUUID();
-
-let localStream = null;
-let muted = false;
-
-const peers = {};
-
-const iceServers = {
-  iceServers: [
-    {
-      urls: "stun:stun.l.google.com:19302"
-    },
-    {
-      urls: "stun:stun1.l.google.com:19302"
-    }
-  ]
-};
-
-
-/* Elements */
-
-const joinButton = document.getElementById("join");
-const muteButton = document.getElementById("mute");
-const roomInput = document.getElementById("room");
-const statusText = document.getElementById("status");
-const usersDiv = document.getElementById("users");
-
-
-/* Join room */
-
-joinButton.onclick = async () => {
-
-  roomName = roomInput.value.trim();
-
-  if (!roomName) {
-    alert("Room name enter karo");
-    return;
-  }
-
-  try {
-
-    localStream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: false
-    });
-
-    statusText.innerText = "🟢 Joining room...";
-
-    joinButton.disabled = true;
-    muteButton.disabled = false;
-
-    const myRef = ref(
-      db,
-      `rooms/${roomName}/users/${myId}`
-    );
-
-    await set(myRef, {
-      joined: Date.now()
-    });
-
-    statusText.innerText =
-      "🟢 Connected to room: " + roomName;
-
-    watchUsers();
-
-  } catch (error) {
-
-    console.error(error);
-
-    statusText.innerText =
-      "❌ Microphone permission required";
-
-  }
-
-};
-
-
-/* Watch other users */
-
-function watchUsers() {
-
-  const usersRef = ref(
-    db,
-    `rooms/${roomName}/users`
-  );
-
-  onValue(usersRef, async snapshot => {
-
-    const users = snapshot.val() || {};
-
-    usersDiv.innerText =
-      "👥 People in room: " +
-      Object.keys(users).length;
-
-    for (const userId of Object.keys(users)) {
-
-      if (userId === myId) continue;
-
-      if (!peers[userId]) {
-
-        await createConnection(userId);
-
-      }
-
-    }
-
-  });
-
-}
-
-
-/* Create WebRTC connection */
-
-async function createConnection(otherId) {
-
-  if (peers[otherId]) {
-    return;
-  }
-
-  const pc = new RTCPeerConnection(iceServers);
-
-  peers[otherId] = pc;
-
-
-  /* Send microphone */
-
-  localStream.getTracks().forEach(track => {
-
-    pc.addTrack(track, localStream);
-
-  });
-
-
-  /* Receive friend's voice */
-
-  pc.ontrack = event => {
-
-    let audio = document.getElementById(
-      "audio-" + otherId
-    );
-
-    if (!audio) {
-
-      audio = document.createElement("audio");
-
-      audio.id = "audio-" + otherId;
-      audio.autoplay = true;
-      audio.playsInline = true;
-
-      document.body.appendChild(audio);
-
-    }
-
-    audio.srcObject = event.streams[0];
-
-  };
-
-
-  /* ICE candidate */
-
-  pc.onicecandidate = event => {
-
-    if (!event.candidate) return;
-
-    const candidateRef = push(
-      ref(
-        db,
-        `rooms/${roomName}/signals/${myId}/${otherId}/ice`
-      )
-    );
-
-    set(candidateRef, event.candidate.toJSON());
-
-  };
-
-
-  /*
-    Check who joined first.
-
-    The user with the smaller ID
-    creates the offer.
-  */
-
-  if (myId < otherId) {
-
-    const offer = await pc.createOffer();
-
-    await pc.setLocalDescription(offer);
-
-    await set(
-      ref(
-        db,
-        `rooms/${roomName}/signals/${myId}/${otherId}/offer`
-      ),
-      {
-        type: offer.type,
-        sdp: offer.sdp
-      }
-    );
-
-  }
-
-
-  listenForSignals(otherId, pc);
-
-}
-
-
-/* Listen for WebRTC signals */
-
-function listenForSignals(otherId, pc) {
-
-  const incomingRef = ref(
-    db,
-    `rooms/${roomName}/signals/${otherId}/${myId}`
-  );
-
-
-  /* Offer */
-
-  onValue(incomingRef, async snapshot => {
-
-    const data = snapshot.val();
-
-    if (!data) return;
-
-
-    if (data.offer &&
-        !pc.currentRemoteDescription) {
-
-      await pc.setRemoteDescription(
-        new RTCSessionDescription(data.offer)
-      );
-
-      const answer =
-        await pc.createAnswer();
-
-      await pc.setLocalDescription(answer);
-
-      await set(
-        ref(
-          db,
-          `rooms/${roomName}/signals/${myId}/${otherId}/answer`
-        ),
+  <div class="card">
+    <h2>🎙️ Voice Room</h2>
+    <input type="text" id="roomIdInput" placeholder="Room ID (e.g. dubai123)">
+    <input type="text" id="usernameInput" placeholder="Your Name">
+    
+    <button id="joinBtn" onclick="joinRoom()">Join Room</button>
+    <button id="muteBtn" onclick="toggleMute()" disabled>Mute</button>
+
+    <div class="status" id="statusText">Not connected</div>
+    <div id="audioContainer"></div>
+  </div>
+
+  <script>
+    // 1. Aapka Firebase Config
+    const firebaseConfig = {
+      apiKey: "AIzaSyAht-2uvNYjZsT5MclMLCXbf5QOkIbgQP4",
+      authDomain: "voiceroom-49a3f.firebaseapp.com",
+      databaseURL: "https://voiceroom-49a3f-default-rtdb.firebaseio.com",
+      projectId: "voiceroom-49a3f",
+      storageBucket: "voiceroom-49a3f.firebasestorage.app",
+      messagingSenderId: "862530914748",
+      appId: "1:862530914748:web:8694d1c274b93674b7c3b9"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // 2. TURN/STUN Configuration
+    const rtcConfig = {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun.relay.metered.ca:80' },
         {
-          type: answer.type,
-          sdp: answer.sdp
+          urls: 'turn:global.relay.metered.ca:80',
+          username: 'fbb7b44cd0db1a6b75784c62',
+          credential: 'DKPbtCSJBOMoFML4'
+        },
+        {
+          urls: 'turn:global.relay.metered.ca:443',
+          username: 'fbb7b44cd0db1a6b75784c62',
+          credential: 'DKPbtCSJBOMoFML4'
+        },
+        {
+          urls: 'turn:global.relay.metered.ca:443?transport=tcp',
+          username: 'fbb7b44cd0db1a6b75784c62',
+          credential: 'DKPbtCSJBOMoFML4'
         }
-      );
+      ]
+    };
 
+    let localStream;
+    let myUid;
+    let currentRoomId;
+    let peerConnections = {};
+    let isMuted = false;
+
+    async function joinRoom() {
+      const roomId = document.getElementById('roomIdInput').value.trim();
+      const username = document.getElementById('usernameInput').value.trim();
+
+      if (!roomId || !username) {
+        alert("Room ID aur Name dono daalo!");
+        return;
+      }
+
+      currentRoomId = roomId;
+      myUid = username + "_" + Math.random().toString(36).substr(2, 5);
+
+      document.getElementById('joinBtn').disabled = true;
+      document.getElementById('statusText').innerText = "Connecting Mic...";
+
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        document.getElementById('statusText').innerText = "Connected to Room: " + roomId;
+        document.getElementById('muteBtn').disabled = false;
+
+        const roomRef = db.ref(`rooms/${roomId}`);
+
+        const userRef = roomRef.child(`users/${myUid}`);
+        userRef.set({ name: username });
+        userRef.onDisconnect().remove();
+
+        roomRef.child('users').on('child_added', snapshot => {
+          const peerUid = snapshot.key;
+          if (peerUid !== myUid && !peerConnections[peerUid]) {
+            createPeerConnection(peerUid, true);
+          }
+        });
+
+        db.ref(`signals/${roomId}/${myUid}`).on('child_added', async snapshot => {
+          const signal = snapshot.val();
+          const fromUid = signal.from;
+
+          if (!peerConnections[fromUid]) {
+            createPeerConnection(fromUid, false);
+          }
+
+          const pc = peerConnections[fromUid];
+
+          if (signal.type === 'offer') {
+            await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+
+            db.ref(`signals/${roomId}/${fromUid}`).push({
+              from: myUid,
+              type: 'answer',
+              sdp: answer
+            });
+          } else if (signal.type === 'answer') {
+            await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+          } else if (signal.type === 'candidate') {
+            await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+          }
+
+          snapshot.ref.remove();
+        });
+
+      } catch (err) {
+        console.error("Mic access error:", err);
+        document.getElementById('statusText').innerText = "Mic access denied!";
+        document.getElementById('joinBtn').disabled = false;
+      }
     }
 
+    function createPeerConnection(peerUid, isInitiator) {
+      const pc = new RTCPeerConnection(rtcConfig);
+      peerConnections[peerUid] = pc;
 
-    /* Answer */
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-    if (
-      data.answer &&
-      pc.signalingState === "have-local-offer"
-    ) {
+      pc.onicecandidate = event => {
+        if (event.candidate) {
+          db.ref(`signals/${currentRoomId}/${peerUid}`).push({
+            from: myUid,
+            type: 'candidate',
+            candidate: event.candidate.toJSON()
+          });
+        }
+      };
 
-      await pc.setRemoteDescription(
-        new RTCSessionDescription(data.answer)
-      );
+      pc.ontrack = event => {
+        let audioEl = document.getElementById(`audio_${peerUid}`);
+        if (!audioEl) {
+          audioEl = document.createElement('audio');
+          audioEl.id = `audio_${peerUid}`;
+          audioEl.autoplay = true;
+          document.getElementById('audioContainer').appendChild(audioEl);
+        }
+        audioEl.srcObject = event.streams[0];
+      };
 
+      if (isInitiator) {
+        pc.onnegotiationneeded = async () => {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          db.ref(`signals/${currentRoomId}/${peerUid}`).push({
+            from: myUid,
+            type: 'offer',
+            sdp: offer
+          });
+        };
+      }
     }
 
-  });
+    function toggleMute() {
+      if (!localStream) return;
+      isMuted = !isMuted;
+      localStream.getAudioTracks()[0].enabled = !isMuted;
 
-
-  /* ICE candidates */
-
-  const iceRef = ref(
-    db,
-    `rooms/${roomName}/signals/${otherId}/${myId}/ice`
-  );
-
-
-  onChildAdded(iceRef, async snapshot => {
-
-    try {
-
-      await pc.addIceCandidate(
-        new RTCIceCandidate(snapshot.val())
-      );
-
-    } catch (error) {
-
-      console.log("ICE error", error);
-
+      const muteBtn = document.getElementById('muteBtn');
+      if (isMuted) {
+        muteBtn.innerText = "Unmute";
+        muteBtn.classList.add('muted');
+      } else {
+        muteBtn.innerText = "Mute";
+        muteBtn.classList.remove('muted');
+      }
     }
-
-  });
-
-}
-
-
-/* Mute */
-
-muteButton.onclick = () => {
-
-  if (!localStream) return;
-
-  muted = !muted;
-
-  localStream.getAudioTracks().forEach(track => {
-    track.enabled = !muted;
-  });
-
-  muteButton.innerText =
-    muted ? "🎙️ Unmute" : "🔇 Mute";
-
-};
-
-
-/* Leave page */
-
-window.addEventListener("beforeunload", async () => {
-
-  if (roomName) {
-
-    await remove(
-      ref(
-        db,
-        `rooms/${roomName}/users/${myId}`
-      )
-    );
-
-  }
-
-});
-
-</script>
-
+  </script>
 </body>
 </html>
