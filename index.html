@@ -172,7 +172,6 @@
     let peerConnections = {};
     let roomUsers = {};
     let isMuted = false;
-    let statsInterval;
 
     async function joinRoom() {
       const roomId = document.getElementById('roomIdInput').value.trim();
@@ -199,7 +198,7 @@
         const roomRef = db.ref(`rooms/${roomId}`);
         const userRef = roomRef.child(`users/${myUid}`);
 
-        userRef.set({ name: username, status: 'connected' });
+        userRef.set({ name: username, status: 'connecting' });
         userRef.onDisconnect().remove();
 
         roomRef.child('users').on('value', snapshot => {
@@ -224,26 +223,28 @@
 
           const pc = peerConnections[fromUid];
 
-          if (signal.type === 'offer') {
-            await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
+          try {
+            if (signal.type === 'offer') {
+              await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+              const answer = await pc.createAnswer();
+              await pc.setLocalDescription(answer);
 
-            db.ref(`signals/${roomId}/${fromUid}`).push({
-              from: myUid,
-              type: 'answer',
-              sdp: answer
-            });
-          } else if (signal.type === 'answer') {
-            await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-          } else if (signal.type === 'candidate') {
-            await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+              db.ref(`signals/${roomId}/${fromUid}`).push({
+                from: myUid,
+                type: 'answer',
+                sdp: answer
+              });
+            } else if (signal.type === 'answer') {
+              await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+            } else if (signal.type === 'candidate') {
+              await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+            }
+          } catch (e) {
+            console.error("Signaling error:", e);
           }
 
           snapshot.ref.remove();
         });
-
-        monitorNetworkQuality();
 
       } catch (err) {
         console.error("Mic access error:", err);
@@ -268,11 +269,13 @@
         }
       };
 
-      pc.onconnectionstatechange = () => {
-        let status = 'connected';
-        if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+      pc.oniceconnectionstatechange = () => {
+        let status = 'connecting';
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          status = 'connected';
+        } else if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
           status = 'disconnected';
-        } else if (pc.connectionState === 'connecting') {
+        } else if (pc.iceConnectionState === 'checking') {
           status = 'reconnecting';
         }
         updateMyStatus(status);
@@ -288,19 +291,23 @@
           document.getElementById('audioContainer').appendChild(audioEl);
         }
         audioEl.srcObject = event.streams[0];
-        audioEl.play().catch(e => console.log("Audio play deferred", e));
+        audioEl.play().catch(e => console.log("Audio play error:", e));
       };
 
       if (isInitiator) {
         pc.onnegotiationneeded = async () => {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
 
-          db.ref(`signals/${currentRoomId}/${peerUid}`).push({
-            from: myUid,
-            type: 'offer',
-            sdp: offer
-          });
+            db.ref(`signals/${currentRoomId}/${peerUid}`).push({
+              from: myUid,
+              type: 'offer',
+              sdp: offer
+            });
+          } catch (e) {
+            console.error("Offer creation error:", e);
+          }
         };
       }
     }
@@ -337,7 +344,6 @@
 
       peerConnections = {};
       roomUsers = {};
-      clearInterval(statsInterval);
 
       document.getElementById('audioContainer').innerHTML = '';
       document.getElementById('membersContainer').innerHTML = '<span style="color: #888; font-size: 12px;">No users in room</span>';
@@ -372,9 +378,9 @@
         const item = document.createElement('div');
         item.className = 'user-item';
 
-        const statusStr = u.status || 'connected';
-        let badgeClass = 'badge-connected';
-        if (statusStr === 'reconnecting') badgeClass = 'badge-reconnecting';
+        const statusStr = u.status || 'connecting';
+        let badgeClass = 'badge-reconnecting';
+        if (statusStr === 'connected') badgeClass = 'badge-connected';
         if (statusStr === 'disconnected') badgeClass = 'badge-disconnected';
 
         const isMe = uid === myUid ? " (You)" : "";
@@ -384,17 +390,6 @@
         `;
         container.appendChild(item);
       });
-    }
-
-    function monitorNetworkQuality() {
-      statsInterval = setInterval(() => {
-        Object.keys(peerConnections).forEach(peerUid => {
-          const pc = peerConnections[peerUid];
-          if (pc && pc.iceConnectionState === 'disconnected') {
-            updateMyStatus('reconnecting');
-          }
-        });
-      }, 3000);
     }
   </script>
 </body>
