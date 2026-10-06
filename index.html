@@ -4,69 +4,217 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Voice Room</title>
-  
-  <!-- PeerJS Library for direct peer connection -->
+
+  <!-- Firebase & PeerJS Scripts -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 
   <style>
-    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { background: #f0f2f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-    .card { background: #ffffff; padding: 24px; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.08); width: 90%; max-width: 360px; text-align: center; }
-    input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #dcdfe6; border-radius: 8px; font-size: 14px; }
-    button { width: 100%; padding: 12px; margin: 6px 0; border: none; border-radius: 8px; background-color: #007bff; color: white; font-weight: bold; font-size: 15px; cursor: pointer; }
-    button:disabled { background-color: #d6d8db; cursor: not-allowed; }
-    #muteBtn { background-color: #28a745; }
-    #muteBtn.muted { background-color: #dc3545; }
-    #leaveBtn { background-color: #6c757d; }
-    .status { margin-top: 15px; font-weight: 600; color: #495057; font-size: 14px; }
-    .badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold; color: white; margin-top: 8px; }
-    .connected { background-color: #28a745; }
-    .connecting { background-color: #ffc107; color: #212529; }
-    .disconnected { background-color: #dc3545; }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #f2f4f8;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 16px;
+    }
+    .card {
+      background: #ffffff;
+      padding: 28px 24px;
+      border-radius: 24px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+      width: 100%;
+      max-width: 380px;
+      text-align: center;
+    }
+    .card-title {
+      font-size: 26px;
+      font-weight: 800;
+      color: #000000;
+      margin: 0 0 20px 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    input {
+      width: 100%;
+      padding: 14px 16px;
+      margin-bottom: 12px;
+      border: 1px solid #e1e4e8;
+      border-radius: 12px;
+      font-size: 15px;
+      outline: none;
+      background-color: #ffffff;
+      color: #333333;
+    }
+    input::placeholder {
+      color: #a0a0a0;
+    }
+    button {
+      width: 100%;
+      padding: 14px;
+      margin: 6px 0;
+      border: none;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    #joinBtn {
+      background-color: #007bff;
+      color: #ffffff;
+    }
+    #joinBtn:disabled {
+      background-color: #d1d5db;
+      color: #ffffff;
+      cursor: not-allowed;
+    }
+    #muteBtn {
+      background-color: #28a745;
+      color: #ffffff;
+    }
+    #muteBtn.muted {
+      background-color: #dc3545;
+    }
+    #muteBtn:disabled {
+      background-color: #28a745;
+      opacity: 0.9;
+      cursor: not-allowed;
+    }
+    #leaveBtn {
+      background-color: #6c757d;
+      color: #ffffff;
+    }
+    #leaveBtn:disabled {
+      background-color: #6c757d;
+      opacity: 0.9;
+      cursor: not-allowed;
+    }
+    .status {
+      margin: 18px 0 14px 0;
+      font-weight: 600;
+      color: #495057;
+      font-size: 14px;
+    }
+    .user-list {
+      background: #f8f9fa;
+      padding: 16px;
+      border-radius: 16px;
+      border: 1px solid #f1f3f5;
+      text-align: left;
+    }
+    .user-list-title {
+      font-weight: 700;
+      font-size: 15px;
+      color: #000000;
+      margin-bottom: 12px;
+    }
+    .user-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid #e9ecef;
+      font-size: 14px;
+    }
+    .user-item:last-child {
+      border-bottom: none;
+    }
+    .badge {
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      color: white;
+      font-weight: 700;
+      text-transform: lowercase;
+    }
+    .badge-connected {
+      background-color: #28a745;
+    }
+    .badge-connecting {
+      background-color: #ffc107;
+      color: #212529;
+    }
+    .badge-disconnected {
+      background-color: #dc3545;
+    }
   </style>
 </head>
 <body>
 
   <div class="card">
-    <h2>🎙️ Voice Call</h2>
+    <div class="card-title">
+      🎙️ Voice Room
+    </div>
+
+    <input type="text" id="roomIdInput" placeholder="Room ID (e.g. dubai123)">
+    <input type="text" id="usernameInput" placeholder="Your Name">
     
-    <div id="setupSec">
-      <input type="text" id="myIdInput" placeholder="Your Unique ID (e.g. akshay1)">
-      <button id="initBtn" onclick="initPeer()">Start Mic Engine</button>
-    </div>
+    <button id="joinBtn" onclick="joinRoom()">Join Room</button>
+    <button id="muteBtn" onclick="toggleMute()" disabled>Mute</button>
+    <button id="leaveBtn" onclick="leaveRoom()" disabled>Disconnect / Leave</button>
 
-    <div id="callSec" style="display:none;">
-      <p>Your ID: <strong id="displayMyId"></strong></p>
-      <input type="text" id="peerIdInput" placeholder="Friend's ID (e.g. friend1)">
-      
-      <button id="callBtn" onclick="makeCall()">Call Friend</button>
-      <button id="muteBtn" onclick="toggleMute()">Mute</button>
-      <button id="leaveBtn" onclick="endCall()">End Call</button>
-    </div>
+    <div class="status" id="statusText">Not connected</div>
 
-    <div class="status" id="statusText">Status: Enter your ID to start</div>
-    <div id="badgeStatus"></div>
+    <div class="user-list">
+      <div class="user-list-title">Active Members:</div>
+      <div id="membersContainer">
+        <span style="color: #888; font-size: 13px;">No users in room</span>
+      </div>
+    </div>
 
     <div id="audioContainer"></div>
   </div>
 
   <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyAht-2uvNYjZsT5MclMLCXbf5QOkIbgQP4",
+      authDomain: "voiceroom-49a3f.firebaseapp.com",
+      databaseURL: "https://voiceroom-49a3f-default-rtdb.firebaseio.com",
+      projectId: "voiceroom-49a3f",
+      storageBucket: "voiceroom-49a3f.firebasestorage.app",
+      messagingSenderId: "862530914748",
+      appId: "1:862530914748:web:8694d1c274b93674b7c3b9"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
     let peer;
     let localStream;
-    let currentCall;
+    let myUid;
+    let currentRoomId;
+    let roomUsers = {};
+    let calls = {};
     let isMuted = false;
 
-    async function initPeer() {
-      const myId = document.getElementById('myIdInput').value.trim().toLowerCase();
-      if (!myId) return alert("Pehle apna Unique ID dalo!");
+    async function joinRoom() {
+      const roomId = document.getElementById('roomIdInput').value.trim().toLowerCase();
+      const username = document.getElementById('usernameInput').value.trim();
 
-      document.getElementById('statusText').innerText = "Requesting Mic Permission...";
+      if (!roomId || !username) {
+        alert("Room ID aur Name dono daalo!");
+        return;
+      }
+
+      currentRoomId = roomId;
+      myUid = username.replace(/\s+/g, '_') + '_' + Math.random().toString(36).substr(2, 4);
+
+      document.getElementById('joinBtn').disabled = true;
+      document.getElementById('statusText').innerText = "Starting Mic...";
 
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
 
-        // Initialize PeerJS with Google STUN Fallbacks
-        peer = new Peer(myId, {
+        peer = new Peer(myUid, {
           config: {
             iceServers: [
               { urls: 'stun:stun.l.google.com:19302' },
@@ -75,63 +223,58 @@
           }
         });
 
-        peer.on('open', (id) => {
-          document.getElementById('setupSec').style.display = 'none';
-          document.getElementById('callSec').style.display = 'block';
-          document.getElementById('displayMyId').innerText = id;
-          document.getElementById('statusText').innerText = "Ready to connect!";
-          updateBadge("Ready", "connecting");
+        peer.on('open', () => {
+          document.getElementById('statusText').innerText = "Connected to Room: " + roomId;
+          document.getElementById('muteBtn').disabled = false;
+          document.getElementById('leaveBtn').disabled = false;
+
+          const userRef = db.ref(`rooms_v3/${roomId}/users/${myUid}`);
+          userRef.set({ name: username, peerId: myUid, status: 'connected' });
+          userRef.onDisconnect().remove();
+
+          db.ref(`rooms_v3/${roomId}/users`).on('value', snapshot => {
+            roomUsers = snapshot.val() || {};
+            renderUserList();
+            connectToNewPeers();
+          });
         });
 
-        // Answer incoming calls automatically
         peer.on('call', (call) => {
-          currentCall = call;
           call.answer(localStream);
-          handleStream(call);
-        });
-
-        peer.on('error', (err) => {
-          alert("Error: " + err.type + " - ID shayad pehle se in-use hai!");
-          document.getElementById('statusText').innerText = "Connection Error";
+          handleCallStream(call);
         });
 
       } catch (e) {
-        alert("Microphone permission allowed nahi hai!");
-        document.getElementById('statusText').innerText = "Mic Permission Denied";
+        alert("Microphone permission required!");
+        document.getElementById('joinBtn').disabled = false;
+        document.getElementById('statusText').innerText = "Mic Error";
       }
     }
 
-    function makeCall() {
-      const friendId = document.getElementById('peerIdInput').value.trim().toLowerCase();
-      if (!friendId) return alert("Dost ki ID dalo!");
-
-      document.getElementById('statusText').innerText = "Calling " + friendId + "...";
-      updateBadge("Connecting...", "connecting");
-
-      const call = peer.call(friendId, localStream);
-      currentCall = call;
-      handleStream(call);
+    function connectToNewPeers() {
+      Object.keys(roomUsers).forEach(uid => {
+        if (uid !== myUid && !calls[uid]) {
+          const peerId = roomUsers[uid].peerId;
+          const call = peer.call(peerId, localStream);
+          if (call) {
+            calls[uid] = call;
+            handleCallStream(call);
+          }
+        }
+      });
     }
 
-    function handleStream(call) {
+    function handleCallStream(call) {
       call.on('stream', (remoteStream) => {
-        let audio = document.getElementById('remoteAudio');
+        let audio = document.getElementById(`aud_${call.peer}`);
         if (!audio) {
           audio = document.createElement('audio');
-          audio.id = 'remoteAudio';
+          audio.id = `aud_${call.peer}`;
           audio.autoplay = true;
           audio.playsInline = true;
           document.getElementById('audioContainer').appendChild(audio);
         }
         audio.srcObject = remoteStream;
-        audio.play().catch(e => console.log(e));
-
-        document.getElementById('statusText').innerText = "Connected in Voice Call!";
-        updateBadge("CONNECTED", "connected");
-      });
-
-      call.on('close', () => {
-        endCall();
       });
     }
 
@@ -145,13 +288,32 @@
       muteBtn.classList.toggle('muted', isMuted);
     }
 
-    function endCall() {
+    function leaveRoom() {
       location.reload();
     }
 
-    function updateBadge(text, typeClass) {
-      const badge = document.getElementById('badgeStatus');
-      badge.innerHTML = `<span class="badge ${typeClass}">${text}</span>`;
+    function renderUserList() {
+      const container = document.getElementById('membersContainer');
+      container.innerHTML = '';
+
+      const uids = Object.keys(roomUsers);
+      if (uids.length === 0) {
+        container.innerHTML = '<span style="color: #888; font-size: 13px;">No users in room</span>';
+        return;
+      }
+
+      uids.forEach(uid => {
+        const u = roomUsers[uid];
+        const item = document.createElement('div');
+        item.className = 'user-item';
+
+        const isMe = uid === myUid ? " (You)" : "";
+        item.innerHTML = `
+          <span><strong>${u.name}</strong>${isMe}</span>
+          <span class="badge badge-connected">connected</span>
+        `;
+        container.appendChild(item);
+      });
     }
   </script>
 </body>
