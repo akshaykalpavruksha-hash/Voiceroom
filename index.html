@@ -5,18 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Voice Room</title>
   
-  <!-- Mobile Debugging Tool -->
   <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
   <script>eruda.init();</script>
 
-  <!-- Firebase Scripts -->
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 
   <style>
     body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background: #eef2f5;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #f0f2f5;
       display: flex;
       justify-content: center;
       align-items: center;
@@ -52,27 +50,12 @@
       font-weight: bold;
       font-size: 15px;
       cursor: pointer;
-      transition: background 0.2s;
     }
-    button:disabled {
-      background-color: #d6d8db;
-      cursor: not-allowed;
-    }
-    #muteBtn {
-      background-color: #28a745;
-    }
-    #muteBtn.muted {
-      background-color: #dc3545;
-    }
-    #leaveBtn {
-      background-color: #6c757d;
-    }
-    .status {
-      margin-top: 15px;
-      font-weight: 600;
-      color: #495057;
-      font-size: 14px;
-    }
+    button:disabled { background-color: #d6d8db; cursor: not-allowed; }
+    #muteBtn { background-color: #28a745; }
+    #muteBtn.muted { background-color: #dc3545; }
+    #leaveBtn { background-color: #6c757d; }
+    .status { margin-top: 15px; font-weight: 600; color: #495057; font-size: 14px; }
     .user-list {
       margin-top: 20px;
       text-align: left;
@@ -80,20 +63,16 @@
       padding: 12px;
       border-radius: 8px;
       border: 1px solid #e9ecef;
-      max-height: 180px;
-      overflow-y: auto;
     }
     .user-item {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 6px 0;
+      padding: 8px 0;
       border-bottom: 1px solid #dee2e6;
       font-size: 14px;
     }
-    .user-item:last-child {
-      border-bottom: none;
-    }
+    .user-item:last-child { border-bottom: none; }
     .badge {
       font-size: 11px;
       padding: 3px 8px;
@@ -146,19 +125,13 @@
     const rtcConfig = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun.relay.metered.ca:80' },
         {
-          urls: 'turn:global.relay.metered.ca:80',
+          urls: 'turn:global.relay.metered.ca:443?transport=tcp',
           username: 'fbb7b44cd0db1a6b75784c62',
           credential: 'DKPbtCSJBOMoFML4'
         },
         {
           urls: 'turn:global.relay.metered.ca:443',
-          username: 'fbb7b44cd0db1a6b75784c62',
-          credential: 'DKPbtCSJBOMoFML4'
-        },
-        {
-          urls: 'turn:global.relay.metered.ca:443?transport=tcp',
           username: 'fbb7b44cd0db1a6b75784c62',
           credential: 'DKPbtCSJBOMoFML4'
         }
@@ -174,7 +147,7 @@
     let isMuted = false;
 
     async function joinRoom() {
-      const roomId = document.getElementById('roomIdInput').value.trim();
+      const roomId = document.getElementById('roomIdInput').value.trim().toLowerCase();
       const username = document.getElementById('usernameInput').value.trim();
 
       if (!roomId || !username) {
@@ -184,7 +157,7 @@
 
       currentRoomId = roomId;
       myName = username;
-      myUid = username + "_" + Math.random().toString(36).substr(2, 5);
+      myUid = username + "_" + Math.random().toString(36).substr(2, 4);
 
       document.getElementById('joinBtn').disabled = true;
       document.getElementById('statusText').innerText = "Connecting Mic...";
@@ -195,18 +168,19 @@
         document.getElementById('muteBtn').disabled = false;
         document.getElementById('leaveBtn').disabled = false;
 
-        const roomRef = db.ref(`rooms/${roomId}`);
-        const userRef = roomRef.child(`users/${myUid}`);
+        // Clear previous signals for clean setup
+        await db.ref(`signals/${roomId}/${myUid}`).remove();
 
+        const userRef = db.ref(`rooms/${roomId}/users/${myUid}`);
         userRef.set({ name: username, status: 'connecting' });
         userRef.onDisconnect().remove();
 
-        roomRef.child('users').on('value', snapshot => {
+        db.ref(`rooms/${roomId}/users`).on('value', snapshot => {
           roomUsers = snapshot.val() || {};
           renderUserList();
         });
 
-        roomRef.child('users').on('child_added', snapshot => {
+        db.ref(`rooms/${roomId}/users`).on('child_added', snapshot => {
           const peerUid = snapshot.key;
           if (peerUid !== myUid && !peerConnections[peerUid]) {
             createPeerConnection(peerUid, true);
@@ -242,13 +216,11 @@
           } catch (e) {
             console.error("Signaling error:", e);
           }
-
           snapshot.ref.remove();
         });
 
       } catch (err) {
-        console.error("Mic access error:", err);
-        document.getElementById('statusText').innerText = "Mic access denied!";
+        alert("Mic access is required to make calls!");
         document.getElementById('joinBtn').disabled = false;
       }
     }
@@ -291,7 +263,7 @@
           document.getElementById('audioContainer').appendChild(audioEl);
         }
         audioEl.srcObject = event.streams[0];
-        audioEl.play().catch(e => console.log("Audio play error:", e));
+        audioEl.play().catch(e => console.log("Audio play blocked by browser:", e));
       };
 
       if (isInitiator) {
@@ -299,14 +271,13 @@
           try {
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
-
             db.ref(`signals/${currentRoomId}/${peerUid}`).push({
               from: myUid,
               type: 'offer',
               sdp: offer
             });
           } catch (e) {
-            console.error("Offer creation error:", e);
+            console.error("Offer error:", e);
           }
         };
       }
@@ -318,13 +289,8 @@
       localStream.getAudioTracks()[0].enabled = !isMuted;
 
       const muteBtn = document.getElementById('muteBtn');
-      if (isMuted) {
-        muteBtn.innerText = "Unmute";
-        muteBtn.classList.add('muted');
-      } else {
-        muteBtn.innerText = "Mute";
-        muteBtn.classList.remove('muted');
-      }
+      muteBtn.innerText = isMuted ? "Unmute" : "Mute";
+      muteBtn.classList.toggle('muted', isMuted);
     }
 
     function leaveRoom() {
@@ -338,6 +304,7 @@
 
       if (currentRoomId && myUid) {
         db.ref(`rooms/${currentRoomId}/users/${myUid}`).remove();
+        db.ref(`signals/${currentRoomId}/${myUid}`).remove();
         db.ref(`signals/${currentRoomId}/${myUid}`).off();
         db.ref(`rooms/${currentRoomId}/users`).off();
       }
