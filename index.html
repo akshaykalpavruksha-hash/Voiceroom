@@ -3,207 +3,156 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Voice App</title>
-  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+  <title>Voice Room</title>
+  
+  <!-- PeerJS Library for direct peer connection -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 
   <style>
-    * { box-sizing: border-box; font-family: sans-serif; }
-    body { background: #f4f6f9; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-    .box { background: #fff; padding: 25px; border-radius: 12px; width: 320px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; }
-    input { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ccc; border-radius: 6px; }
-    button { width: 100%; padding: 10px; margin: 6px 0; border: none; border-radius: 6px; background: #007bff; color: #fff; font-weight: bold; cursor: pointer; }
-    button:disabled { background: #ccc; }
-    .status-box { margin-top: 15px; font-size: 14px; font-weight: bold; color: #333; }
-    .user-tag { display: flex; justify-content: space-between; background: #f0f0f0; padding: 8px; border-radius: 6px; margin-top: 6px; font-size: 13px; }
-    .dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; }
-    .green { background-color: #28a745; }
-    .orange { background-color: #ffc107; }
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: #f0f2f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+    .card { background: #ffffff; padding: 24px; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.08); width: 90%; max-width: 360px; text-align: center; }
+    input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #dcdfe6; border-radius: 8px; font-size: 14px; }
+    button { width: 100%; padding: 12px; margin: 6px 0; border: none; border-radius: 8px; background-color: #007bff; color: white; font-weight: bold; font-size: 15px; cursor: pointer; }
+    button:disabled { background-color: #d6d8db; cursor: not-allowed; }
+    #muteBtn { background-color: #28a745; }
+    #muteBtn.muted { background-color: #dc3545; }
+    #leaveBtn { background-color: #6c757d; }
+    .status { margin-top: 15px; font-weight: 600; color: #495057; font-size: 14px; }
+    .badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold; color: white; margin-top: 8px; }
+    .connected { background-color: #28a745; }
+    .connecting { background-color: #ffc107; color: #212529; }
+    .disconnected { background-color: #dc3545; }
   </style>
 </head>
 <body>
 
-<div class="box">
-  <h3>🎙️ Voice Call</h3>
-  <input type="text" id="roomId" placeholder="Enter Room Name">
-  <input type="text" id="username" placeholder="Your Name">
-  
-  <button id="joinBtn" onclick="startCall()">Join Call</button>
-  <button id="leaveBtn" onclick="endCall()" disabled style="background:#dc3545;">Leave</button>
+  <div class="card">
+    <h2>🎙️ Voice Call</h2>
+    
+    <div id="setupSec">
+      <input type="text" id="myIdInput" placeholder="Your Unique ID (e.g. akshay1)">
+      <button id="initBtn" onclick="initPeer()">Start Mic Engine</button>
+    </div>
 
-  <div class="status-box" id="status">Status: Idle</div>
+    <div id="callSec" style="display:none;">
+      <p>Your ID: <strong id="displayMyId"></strong></p>
+      <input type="text" id="peerIdInput" placeholder="Friend's ID (e.g. friend1)">
+      
+      <button id="callBtn" onclick="makeCall()">Call Friend</button>
+      <button id="muteBtn" onclick="toggleMute()">Mute</button>
+      <button id="leaveBtn" onclick="endCall()">End Call</button>
+    </div>
 
-  <div style="text-align: left; margin-top: 15px;">
-    <small>Members:</small>
-    <div id="memberList"></div>
+    <div class="status" id="statusText">Status: Enter your ID to start</div>
+    <div id="badgeStatus"></div>
+
+    <div id="audioContainer"></div>
   </div>
-</div>
 
-<div id="audios"></div>
+  <script>
+    let peer;
+    let localStream;
+    let currentCall;
+    let isMuted = false;
 
-<script>
-  const firebaseConfig = {
-    apiKey: "AIzaSyAht-2uvNYjZsT5MclMLCXbf5QOkIbgQP4",
-    authDomain: "voiceroom-49a3f.firebaseapp.com",
-    databaseURL: "https://voiceroom-49a3f-default-rtdb.firebaseio.com",
-    projectId: "voiceroom-49a3f",
-    storageBucket: "voiceroom-49a3f.firebasestorage.app",
-    messagingSenderId: "862530914748",
-    appId: "1:862530914748:web:8694d1c274b93674b7c3b9"
-  };
+    async function initPeer() {
+      const myId = document.getElementById('myIdInput').value.trim().toLowerCase();
+      if (!myId) return alert("Pehle apna Unique ID dalo!");
 
-  firebase.initializeApp(firebaseConfig);
-  const db = firebase.database();
+      document.getElementById('statusText').innerText = "Requesting Mic Permission...";
 
-  const servers = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      {
-        urls: 'turn:global.relay.metered.ca:443',
-        username: 'fbb7b44cd0db1a6b75784c62',
-        credential: 'DKPbtCSJBOMoFML4'
-      }
-    ]
-  };
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
 
-  let localStream;
-  let myId;
-  let activeRoom;
-  let pcs = {};
-
-  async function startCall() {
-    const room = document.getElementById('roomId').value.trim().toLowerCase();
-    const name = document.getElementById('username').value.trim();
-
-    if(!room || !name) return alert("Room aur Name dono fill karo!");
-
-    activeRoom = room;
-    myId = name + "_" + Math.floor(Math.random() * 1000);
-
-    document.getElementById('joinBtn').disabled = true;
-    document.getElementById('status').innerText = "Mic Permissions...";
-
-    try {
-      localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      document.getElementById('status').innerText = "In Room: " + room;
-      document.getElementById('leaveBtn').disabled = false;
-
-      // Register presence
-      const userRef = db.ref(`v2_rooms/${room}/${myId}`);
-      userRef.set({ name: name, state: 'connecting' });
-      userRef.onDisconnect().remove();
-
-      // Listen for other users
-      db.ref(`v2_rooms/${room}`).on('child_added', snapshot => {
-        const peerId = snapshot.key;
-        if(peerId !== myId && !pcs[peerId]) {
-          initiatePeerConnection(peerId, true);
-        }
-      });
-
-      db.ref(`v2_rooms/${room}`).on('value', snapshot => {
-        renderMembers(snapshot.val() || {});
-      });
-
-      // Listen for signals
-      db.ref(`v2_sig/${room}/${myId}`).on('child_added', async snapshot => {
-        const data = snapshot.val();
-        const from = data.from;
-
-        if(!pcs[from]) initiatePeerConnection(from, false);
-        const pc = pcs[from];
-
-        if(data.type === 'offer') {
-          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          db.ref(`v2_sig/${room}/${from}`).push({ from: myId, type: 'answer', sdp: answer });
-        } 
-        else if(data.type === 'answer') {
-          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-        } 
-        else if(data.type === 'candidate') {
-          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-        }
-        snapshot.ref.remove();
-      });
-
-    } catch (e) {
-      alert("Microphone permission required!");
-      document.getElementById('joinBtn').disabled = false;
-      document.getElementById('status').innerText = "Mic Error";
-    }
-  }
-
-  function initiatePeerConnection(peerId, isInitiator) {
-    const pc = new RTCPeerConnection(servers);
-    pcs[peerId] = pc;
-
-    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-
-    pc.onicecandidate = e => {
-      if(e.candidate) {
-        db.ref(`v2_sig/${activeRoom}/${peerId}`).push({
-          from: myId,
-          type: 'candidate',
-          candidate: e.candidate.toJSON()
+        // Initialize PeerJS with Google STUN Fallbacks
+        peer = new Peer(myId, {
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+          }
         });
-      }
-    };
 
-    pc.oniceconnectionstatechange = () => {
-      let st = 'connecting';
-      if(pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-        st = 'connected';
-      }
-      db.ref(`v2_rooms/${activeRoom}/${myId}/state`).set(st);
-    };
-
-    pc.ontrack = e => {
-      let el = document.getElementById(`aud_${peerId}`);
-      if(!el) {
-        el = document.createElement('audio');
-        el.id = `aud_${peerId}`;
-        el.autoplay = true;
-        el.playsInline = true;
-        document.getElementById('audios').appendChild(el);
-      }
-      el.srcObject = e.streams[0];
-    };
-
-    if(isInitiator) {
-      pc.onnegotiationneeded = async () => {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        db.ref(`v2_sig/${activeRoom}/${peerId}`).push({
-          from: myId,
-          type: 'offer',
-          sdp: offer
+        peer.on('open', (id) => {
+          document.getElementById('setupSec').style.display = 'none';
+          document.getElementById('callSec').style.display = 'block';
+          document.getElementById('displayMyId').innerText = id;
+          document.getElementById('statusText').innerText = "Ready to connect!";
+          updateBadge("Ready", "connecting");
         });
-      };
+
+        // Answer incoming calls automatically
+        peer.on('call', (call) => {
+          currentCall = call;
+          call.answer(localStream);
+          handleStream(call);
+        });
+
+        peer.on('error', (err) => {
+          alert("Error: " + err.type + " - ID shayad pehle se in-use hai!");
+          document.getElementById('statusText').innerText = "Connection Error";
+        });
+
+      } catch (e) {
+        alert("Microphone permission allowed nahi hai!");
+        document.getElementById('statusText').innerText = "Mic Permission Denied";
+      }
     }
-  }
 
-  function renderMembers(data) {
-    const container = document.getElementById('memberList');
-    container.innerHTML = '';
-    Object.keys(data).forEach(id => {
-      const u = data[id];
-      const isConnected = u.state === 'connected';
-      const div = document.createElement('div');
-      div.className = 'user-tag';
-      div.innerHTML = `
-        <span>${u.name} ${id === myId ? '(You)' : ''}</span>
-        <span><span class="dot ${isConnected ? 'green' : 'orange'}"></span> ${u.state || 'connecting'}</span>
-      `;
-      container.appendChild(div);
-    });
-  }
+    function makeCall() {
+      const friendId = document.getElementById('peerIdInput').value.trim().toLowerCase();
+      if (!friendId) return alert("Dost ki ID dalo!");
 
-  function endCall() {
-    location.reload();
-  }
-</script>
+      document.getElementById('statusText').innerText = "Calling " + friendId + "...";
+      updateBadge("Connecting...", "connecting");
+
+      const call = peer.call(friendId, localStream);
+      currentCall = call;
+      handleStream(call);
+    }
+
+    function handleStream(call) {
+      call.on('stream', (remoteStream) => {
+        let audio = document.getElementById('remoteAudio');
+        if (!audio) {
+          audio = document.createElement('audio');
+          audio.id = 'remoteAudio';
+          audio.autoplay = true;
+          audio.playsInline = true;
+          document.getElementById('audioContainer').appendChild(audio);
+        }
+        audio.srcObject = remoteStream;
+        audio.play().catch(e => console.log(e));
+
+        document.getElementById('statusText').innerText = "Connected in Voice Call!";
+        updateBadge("CONNECTED", "connected");
+      });
+
+      call.on('close', () => {
+        endCall();
+      });
+    }
+
+    function toggleMute() {
+      if (!localStream) return;
+      isMuted = !isMuted;
+      localStream.getAudioTracks()[0].enabled = !isMuted;
+
+      const muteBtn = document.getElementById('muteBtn');
+      muteBtn.innerText = isMuted ? "Unmute" : "Mute";
+      muteBtn.classList.toggle('muted', isMuted);
+    }
+
+    function endCall() {
+      location.reload();
+    }
+
+    function updateBadge(text, typeClass) {
+      const badge = document.getElementById('badgeStatus');
+      badge.innerHTML = `<span class="badge ${typeClass}">${text}</span>`;
+    }
+  </script>
 </body>
 </html>
