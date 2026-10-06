@@ -4,9 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Voice Room</title>
-  
-  <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
-  <script>eruda.init();</script>
 
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
@@ -81,7 +78,7 @@
       font-weight: bold;
     }
     .badge-connected { background-color: #28a745; }
-    .badge-reconnecting { background-color: #ffc107; color: #212529; }
+    .badge-connecting { background-color: #ffc107; color: #212529; }
     .badge-disconnected { background-color: #dc3545; }
   </style>
 </head>
@@ -125,8 +122,10 @@
     const rtcConfig = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
         {
-          urls: 'turn:global.relay.metered.ca:443?transport=tcp',
+          urls: 'turn:global.relay.metered.ca:80',
           username: 'fbb7b44cd0db1a6b75784c62',
           credential: 'DKPbtCSJBOMoFML4'
         },
@@ -160,16 +159,13 @@
       myUid = username + "_" + Math.random().toString(36).substr(2, 4);
 
       document.getElementById('joinBtn').disabled = true;
-      document.getElementById('statusText').innerText = "Connecting Mic...";
+      document.getElementById('statusText').innerText = "Requesting Mic Permission...";
 
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
         document.getElementById('statusText').innerText = "Connected to Room: " + roomId;
         document.getElementById('muteBtn').disabled = false;
         document.getElementById('leaveBtn').disabled = false;
-
-        // Clear previous signals for clean setup
-        await db.ref(`signals/${roomId}/${myUid}`).remove();
 
         const userRef = db.ref(`rooms/${roomId}/users/${myUid}`);
         userRef.set({ name: username, status: 'connecting' });
@@ -183,7 +179,7 @@
         db.ref(`rooms/${roomId}/users`).on('child_added', snapshot => {
           const peerUid = snapshot.key;
           if (peerUid !== myUid && !peerConnections[peerUid]) {
-            createPeerConnection(peerUid, true);
+            initiateCall(peerUid);
           }
         });
 
@@ -191,41 +187,24 @@
           const signal = snapshot.val();
           const fromUid = signal.from;
 
-          if (!peerConnections[fromUid]) {
-            createPeerConnection(fromUid, false);
-          }
-
-          const pc = peerConnections[fromUid];
-
-          try {
-            if (signal.type === 'offer') {
-              await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-              const answer = await pc.createAnswer();
-              await pc.setLocalDescription(answer);
-
-              db.ref(`signals/${roomId}/${fromUid}`).push({
-                from: myUid,
-                type: 'answer',
-                sdp: answer
-              });
-            } else if (signal.type === 'answer') {
-              await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-            } else if (signal.type === 'candidate') {
-              await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
-            }
-          } catch (e) {
-            console.error("Signaling error:", e);
+          if (signal.type === 'offer') {
+            await handleOffer(fromUid, signal.sdp);
+          } else if (signal.type === 'answer') {
+            await handleAnswer(fromUid, signal.sdp);
+          } else if (signal.type === 'candidate') {
+            await handleCandidate(fromUid, signal.candidate);
           }
           snapshot.ref.remove();
         });
 
       } catch (err) {
-        alert("Mic access is required to make calls!");
+        alert("Mic permission rejected! App settings me jakar microphone allow karo.");
+        document.getElementById('statusText').innerText = "Mic Error";
         document.getElementById('joinBtn').disabled = false;
       }
     }
 
-    function createPeerConnection(peerUid, isInitiator) {
+    function createPeer(peerUid) {
       const pc = new RTCPeerConnection(rtcConfig);
       peerConnections[peerUid] = pc;
 
@@ -247,8 +226,6 @@
           status = 'connected';
         } else if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
           status = 'disconnected';
-        } else if (pc.iceConnectionState === 'checking') {
-          status = 'reconnecting';
         }
         updateMyStatus(status);
       };
@@ -259,27 +236,56 @@
           audioEl = document.createElement('audio');
           audioEl.id = `audio_${peerUid}`;
           audioEl.autoplay = true;
-          audioEl.setAttribute('playsinline', 'true');
+          audioEl.playsInline = true;
           document.getElementById('audioContainer').appendChild(audioEl);
         }
         audioEl.srcObject = event.streams[0];
-        audioEl.play().catch(e => console.log("Audio play blocked by browser:", e));
+        audioEl.play().catch(e => console.log("Audio play error:", e));
       };
 
-      if (isInitiator) {
-        pc.onnegotiationneeded = async () => {
-          try {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            db.ref(`signals/${currentRoomId}/${peerUid}`).push({
-              from: myUid,
-              type: 'offer',
-              sdp: offer
-            });
-          } catch (e) {
-            console.error("Offer error:", e);
-          }
-        };
+      return pc;
+    }
+
+    async function initiateCall(peerUid) {
+      const pc = createPeer(peerUid);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      db.ref(`signals/${currentRoomId}/${peerUid}`).push({
+        from: myUid,
+        type: 'offer',
+        sdp: offer
+      });
+    }
+
+    async function handleOffer(fromUid, sdp) {
+      const pc = createPeer(fromUid);
+      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      db.ref(`signals/${currentRoomId}/${fromUid}`).push({
+        from: myUid,
+        type: 'answer',
+        sdp: answer
+      });
+    }
+
+    async function handleAnswer(fromUid, sdp) {
+      const pc = peerConnections[fromUid];
+      if (pc) {
+        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      }
+    }
+
+    async function handleCandidate(fromUid, candidate) {
+      const pc = peerConnections[fromUid];
+      if (pc && candidate) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (e) {
+          console.error("Candidate add error", e);
+        }
       }
     }
 
@@ -346,7 +352,7 @@
         item.className = 'user-item';
 
         const statusStr = u.status || 'connecting';
-        let badgeClass = 'badge-reconnecting';
+        let badgeClass = 'badge-connecting';
         if (statusStr === 'connected') badgeClass = 'badge-connected';
         if (statusStr === 'disconnected') badgeClass = 'badge-disconnected';
 
